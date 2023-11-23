@@ -65,6 +65,6 @@ fn main() {
     world.borrow_mut().add(Rc::new(RefCell::new(Sphere::new(Point3::new(4.0, 1.0, 0.0), 1.0, material3))));
 
     let mut camera = Camera::new(Point3::new(13.0, 2.0, 3.0), Point3::new(0.0, 0.0, 0.0), FRAC_PI_8, 0.6, 10.0);
-    camera.initialize(16.0/9.0, 200);
+    camera.initialize(16.0/9.0, 1200);
     camera.render(Rc::clone(&world) as Rc<RefCell<dyn Hittable>>);
 }

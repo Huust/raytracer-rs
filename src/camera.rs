@@ -13,7 +13,7 @@ use rand::prelude::*;
 use std::f64::consts::PI;
 
 const MAX_COLOR: u32 = 255;
-const NUMS_SAMPLE: usize = 100;
+const NUMS_SAMPLE: usize = 500;
 const TIMES_REFLECTION: usize = 50; // maximum reflection times, otherwise may cause stackoverflow
 
 pub struct Camera {
