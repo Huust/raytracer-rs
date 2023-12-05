@@ -4,16 +4,16 @@ use crate::hittable::{Hittable, HitRecord};
 use crate::interval::Interval;
 use crate::material::Material;
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct Sphere {
     center: Point3,
     radius: f64,
-    material: Rc<dyn Material>
+    material: Arc<dyn Material>
 }
 
 impl Sphere {
-    pub fn new(center: Point3, radius: f64, material: Rc<dyn Material>) -> Sphere {
+    pub fn new(center: Point3, radius: f64, material: Arc<dyn Material>) -> Sphere {
         Sphere{ center, radius, material }
     }
 }
@@ -50,13 +50,13 @@ impl Hittable for Sphere {
                             normal: outside_normal, 
                             t: root, 
                             from_outside: true,
-                            material: Rc::clone(&self.material) })
+                            material: self.material.clone() })
         } else {
             Some(HitRecord{ p: intersection, 
                             normal: -outside_normal, 
                             t: root, 
                             from_outside: false,
-                            material: Rc::clone(&self.material) })
+                            material: self.material.clone() })
         }
     }
 }

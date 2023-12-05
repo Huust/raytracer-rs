@@ -6,19 +6,21 @@ use crate::hittable::{Hittable, HitRecord};
 use crate::interval::Interval;
 use crate::material::Metal;
 
-use std::rc::Rc;
-use std::cell::RefCell;
+use std::sync::Arc;
 
 pub struct HittableList {
-    objects: Vec<Rc<RefCell<dyn Hittable>>>
+    objects: Vec<Arc<dyn Hittable>>
 }
+
+unsafe impl Sync for HittableList {}
+unsafe impl Send for HittableList {}
 
 impl HittableList {
     pub fn new() -> HittableList {
         HittableList{ objects: vec![] } 
     }
     
-    pub fn add(&mut self, object: Rc<RefCell<dyn Hittable>>) {
+    pub fn add(&mut self, object: Arc<dyn Hittable>) {
         self.objects.push(object); 
     }
 }
@@ -31,11 +33,11 @@ impl Hittable for HittableList {
                                  normal: Vec3::new(0.0, 0.0, 0.0),
                                  t: 0.0,
                                  from_outside: false, 
-                                 material: Rc::new(Metal::new(Color::new(0.0, 0.0, 0.0), 1.0)) };
+                                 material: Arc::new(Metal::new(Color::new(0.0, 0.0, 0.0), 1.0)) };
                                  
         
         for object in self.objects.iter() {
-            if let Some(record) = object.borrow().hit(ray, interval) {
+            if let Some(record) = object.hit(ray, interval) {
                 hit_anything = true;
                 interval.set_max(record.t);
                 rec = record;

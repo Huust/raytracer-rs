@@ -7,13 +7,13 @@ use crate::ray::Ray;
 use crate::hittable::Hittable;
 use crate::interval::Interval;
 
-use std::rc::Rc;
-use std::cell::RefCell; 
+use std::sync::{Arc, Mutex};
+use std::thread;
 use rand::prelude::*;
 use std::f64::consts::PI;
 
 const MAX_COLOR: u32 = 255;
-const NUMS_SAMPLE: usize = 500;
+const NUM_SAMPLES: usize = 500;
 const TIMES_REFLECTION: usize = 50; // maximum reflection times, otherwise may cause stackoverflow
 
 pub struct Camera {
@@ -54,9 +54,7 @@ impl Camera {
         self.viewport_h = 2.0 * self.focal_length * (self.theta / 2.0).tan();
     }
     
-    pub fn render(&mut self, world: Rc<RefCell<dyn Hittable>>) {
-        
-
+    pub fn render(&mut self, world: Arc<dyn Hittable + Sync + Send>) {
         let camera_center = self.lookfrom;
         let w = (self.lookfrom - self.lookat).unit_vector();
         let u = ((-w).cross(&self.vup.unit_vector())).unit_vector();
@@ -93,8 +91,14 @@ impl Camera {
         for i in 0..image_h {
             eprintln!("Scanning line {}/{}...", i, image_h - 1);
             for j in 0..self.image_w {
-                let rays = self.get_sample_ray(i, j, pixel00_loc, delta_u, delta_v);
-                Self::write_color(rays, Rc::clone(&world));
+                use std::time::Instant;
+                let now = Instant::now();
+                {
+                Self::write_color(self.get_sample_ray(i, j, pixel00_loc, delta_u, delta_v, world.clone()));
+                }
+                let elapsed = now.elapsed();
+                eprintln!("Elapsed: {:.2?}", elapsed);
+                panic!("test finished!");
 
 
                 if j == self.image_w - 1 {
@@ -107,41 +111,49 @@ impl Camera {
         eprintln!("Scanning done!");
     }
 
-    // determine 10 random pixels in current square, get their rays
-    fn get_sample_ray(&self, i: u32, j: u32, pixel00_loc: Point3, delta_u: Vec3, delta_v: Vec3) -> Vec<Ray> {
-        let mut rays = vec![];
-        let center_pixel: Point3 = pixel00_loc + j as f64 * delta_u
-                                        - i as f64 * delta_v;
-        let mut rng = thread_rng();
-
-        // generate 10 random pixels coordinate
-        // random number randoms from [-0.5, +0.5]
-        for _ in 0..NUMS_SAMPLE {
-            let random = rng.gen_range(-0.5..=0.5);
-            let random_pixel = center_pixel + random * delta_u + random * delta_v;
-            let origin = if self.defocus_angle <= 0.0 {self.lookfrom} else {self.defocus_disk_sample()};
-            // rays.push(Ray::new(self.lookfrom, random_pixel - self.lookfrom));
-            rays.push(Ray::new(origin, random_pixel - origin));
+    // determine NUM_SAMPLES random pixels in current square, get their rays
+    fn get_sample_ray(&self, i: u32, j: u32, pixel00_loc: Point3, delta_u: Vec3, delta_v: Vec3, world: Arc<dyn Hittable + Sync + Send>) -> Color {
+        let center_pixel: Point3 = pixel00_loc + j as f64 * delta_u - i as f64 * delta_v;
+        let pixel_color = Arc::new(Mutex::new(Color::new(0.0, 0.0, 0.0)));
+        let origin = if self.defocus_angle <= 0.0 {self.lookfrom} else {self.defocus_disk_sample()};
+        let mut threads = vec![];
+        for _ in 0..NUM_SAMPLES {
+            let pixel_color_ref = pixel_color.clone();
+            let world_ref = world.clone();
+            threads.push(thread::spawn(move || {
+                let random = thread_rng().gen_range(-0.5..=0.5);
+                let random_pixel = center_pixel + random * delta_u + random * delta_v;
+                // code below will cause lifetime issue, so I put them outside closure
+                // let origin = if self.defocus_angle <= 0.0 {self.lookfrom} else {self.defocus_disk_sample()};    
+                let ray = Ray::new(origin, random_pixel - origin);
+                let color = Self::ray_color(&ray, world_ref, TIMES_REFLECTION);
+                let mut guard = pixel_color_ref.lock().unwrap();
+                *guard += color;
+            }));
+        }
+        for thread in threads {
+            thread.join().expect("thread spawn error!");
         }
 
-        rays
+        // concerning lifetime of temporaries in Rust
+        let x = *pixel_color.lock().unwrap(); x
     }
 
     // Given a ray at some position in world, what is its color?
-    fn ray_color(ray: &Ray, world: Rc<RefCell<dyn Hittable>>, depth: usize) -> Color {
+    fn ray_color(ray: &Ray, world: Arc<dyn Hittable + Sync + Send>, depth: usize) -> Color {
         let unit_direction = ray.direction().unit_vector();
         let a = 0.5*(unit_direction.y() + 1.0);
         let default_color = (1.0-a)*Color::new(1.0, 1.0, 1.0) + a*Color::new(0.5, 0.7, 1.0);
 
         if depth <= 0 { return default_color; }
 
-        match world.borrow().hit(ray, Interval::new(0.001, std::f64::INFINITY)) {
+        match world.hit(ray, Interval::new(0.001, std::f64::INFINITY)) {
             None => default_color,
             Some(record) => {
                 match record.material.scatter(ray, &record) {
                     None => Color::new(0.0, 0.0, 0.0),
                     Some((attenuation, scattered_ray)) => {
-                        attenuation * Self::ray_color(&scattered_ray, Rc::clone(&world), depth - 1)
+                        attenuation * Self::ray_color(&scattered_ray, world.clone(), depth - 1)
                     }
                 }
             }
@@ -149,15 +161,8 @@ impl Camera {
     }
 
     // Write color(RGB) to stdout.
-    fn write_color(rays: Vec<Ray>, world: Rc<RefCell<dyn Hittable>>) {
-        let mut count: usize = 0;
-        let mut pixel_color: Color = Color::new(0.0, 0.0, 0.0);
-
-        for ray in &rays {
-            count += 1;
-            pixel_color += Self::ray_color(ray, Rc::clone(&world), TIMES_REFLECTION);
-        }
-        pixel_color /= count as f64;
+    fn write_color(mut pixel_color: Color) {
+        pixel_color /= NUM_SAMPLES as f64;
         pixel_color.sqrt(); // linear to gamma transform
 
         print!("{} {} {}", (MAX_COLOR as f64 * pixel_color.x()) as u32,
