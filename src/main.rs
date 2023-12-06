@@ -8,7 +8,6 @@ mod camera;
 mod material;
 use vec3::{Point3, Color};
 use sphere::Sphere;
-use hittable::Hittable;
 use hittable_list::HittableList;
 use camera::Camera;
 use material::{Material, Lambertian as Lamber, Metal, Dielectrics as Die};
@@ -19,6 +18,9 @@ use rand::prelude::*;
 // use std::f64::consts::FRAC_PI_4;
 use std::f64::consts::FRAC_PI_8;
 
+const IMAGE_WIDTH: u32  = 1200;
+const ASPECT_RATIO: f64 = 16.0 / 9.0;
+const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f64 / ASPECT_RATIO) as u32;
 
 fn main() {
     let mut world = HittableList::new();
@@ -65,6 +67,6 @@ fn main() {
     let world_ref = Arc::new(world);
 
     let mut camera = Camera::new(Point3::new(13.0, 2.0, 3.0), Point3::new(0.0, 0.0, 0.0), FRAC_PI_8, 0.6, 10.0);
-    camera.initialize(16.0/9.0, 1200);
+    camera.initialize(ASPECT_RATIO, IMAGE_WIDTH);
     camera.render(world_ref);
 }

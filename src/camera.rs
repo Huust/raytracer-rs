@@ -13,8 +13,13 @@ use rand::prelude::*;
 use std::f64::consts::PI;
 
 const MAX_COLOR: u32 = 255;
-const NUM_SAMPLES: usize = 500;
-const TIMES_REFLECTION: usize = 50; // maximum reflection times, otherwise may cause stackoverflow
+const NUM_SAMPLES: u32 = 10;
+const TIMES_REFLECTION: u32 = 50; // maximum reflection times, otherwise may cause stackoverflow
+const NUM_THREADS: u32 = 12;
+
+
+#[derive(Copy, Clone)]
+struct RGB(u32, u32, u32);
 
 pub struct Camera {
     aspect_ratio : f64,
@@ -87,35 +92,51 @@ impl Camera {
         let delta_v = viewport_v / image_h as f64;
         let pixel00_loc: Point3 = vp_upper_left_pos + 0.5 * (delta_u - delta_v);
 
-        // rendering...
-        for i in 0..image_h {
-            eprintln!("Scanning line {}/{}...", i, image_h - 1);
-            for j in 0..self.image_w {
-                use std::time::Instant;
-                let now = Instant::now();
-                {
-                Self::write_color(self.get_sample_ray(i, j, pixel00_loc, delta_u, delta_v, world.clone()));
+        // rendering, multithreading version
+        let width = self.image_w;
+        use crate::{IMAGE_WIDTH, IMAGE_HEIGHT};
+        let canvas = Arc::new(Mutex::new(vec![vec![RGB(0, 0, 0); IMAGE_WIDTH as usize]; IMAGE_HEIGHT as usize]));
+        let mut threads = vec![];
+        for i in 0..NUM_THREADS {
+            let canvas_ref = canvas.clone();
+            let world_ref = world.clone();
+            threads.push(thread::spawn(move || {
+                let mut col = i;
+                while col < width {
+                    for j in 0..image_h {
+                        let temp = Self::write_color(Self::get_sample_ray(i, j, pixel00_loc, delta_u, delta_v, world_ref.clone()));
+                        let mut guard = canvas_ref.lock().unwrap();
+                        (*guard)[j as usize][i as usize] = temp;
+                    }
+                    col += NUM_THREADS;
                 }
-                let elapsed = now.elapsed();
-                eprintln!("Elapsed: {:.2?}", elapsed);
-                panic!("test finished!");
-
-
-                if j == self.image_w - 1 {
+            }));
+        }
+        for thread in threads {
+            thread.join().expect("thread spawn fail!");
+            eprintln!("one of threads has finished");
+        }
+         
+        // write canvas into file
+        let guard = canvas.lock().unwrap();
+        for i in 0..image_h as usize {
+            for j in 0..self.image_w as usize {
+                print!("{} {} {}", (*guard)[i][j].0, (*guard)[i][j].1, (*guard)[i][j].2); 
+                if j == self.image_w as usize - 1 {
                     print!("\n");
                 } else {
                     print!("  ");
                 }
             }
         }
-        eprintln!("Scanning done!");
     }
 
     // determine NUM_SAMPLES random pixels in current square, get their rays
-    fn get_sample_ray(&self, i: u32, j: u32, pixel00_loc: Point3, delta_u: Vec3, delta_v: Vec3, world: Arc<dyn Hittable + Sync + Send>) -> Color {
+    fn get_sample_ray(i: u32, j: u32, pixel00_loc: Point3, delta_u: Vec3, delta_v: Vec3, world: Arc<dyn Hittable + Sync + Send>) -> Color {
         let center_pixel: Point3 = pixel00_loc + j as f64 * delta_u - i as f64 * delta_v;
         let pixel_color = Arc::new(Mutex::new(Color::new(0.0, 0.0, 0.0)));
-        let origin = if self.defocus_angle <= 0.0 {self.lookfrom} else {self.defocus_disk_sample()};
+        let origin = Point3::new(0.0, 0.0, 0.0);
+        // let origin = if self.defocus_angle <= 0.0 {self.lookfrom} else {self.defocus_disk_sample()};
         let mut threads = vec![];
         for _ in 0..NUM_SAMPLES {
             let pixel_color_ref = pixel_color.clone();
@@ -140,7 +161,7 @@ impl Camera {
     }
 
     // Given a ray at some position in world, what is its color?
-    fn ray_color(ray: &Ray, world: Arc<dyn Hittable + Sync + Send>, depth: usize) -> Color {
+    fn ray_color(ray: &Ray, world: Arc<dyn Hittable + Sync + Send>, depth: u32) -> Color {
         let unit_direction = ray.direction().unit_vector();
         let a = 0.5*(unit_direction.y() + 1.0);
         let default_color = (1.0-a)*Color::new(1.0, 1.0, 1.0) + a*Color::new(0.5, 0.7, 1.0);
@@ -161,13 +182,13 @@ impl Camera {
     }
 
     // Write color(RGB) to stdout.
-    fn write_color(mut pixel_color: Color) {
+    fn write_color(mut pixel_color: Color) -> RGB {
         pixel_color /= NUM_SAMPLES as f64;
         pixel_color.sqrt(); // linear to gamma transform
 
-        print!("{} {} {}", (MAX_COLOR as f64 * pixel_color.x()) as u32,
-                           (MAX_COLOR as f64 * pixel_color.y()) as u32,
-                           (MAX_COLOR as f64 * pixel_color.z()) as u32);
+        RGB((MAX_COLOR as f64 * pixel_color.x()) as u32,
+            (MAX_COLOR as f64 * pixel_color.y()) as u32,
+            (MAX_COLOR as f64 * pixel_color.z()) as u32)
     }
 
     fn defocus_disk_sample(&self) -> Point3 {
