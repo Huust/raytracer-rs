@@ -18,7 +18,7 @@ use rand::prelude::*;
 // use std::f64::consts::FRAC_PI_4;
 use std::f64::consts::FRAC_PI_8;
 
-const IMAGE_WIDTH: u32  = 1200;
+const IMAGE_WIDTH: u32  = 200;
 const ASPECT_RATIO: f64 = 16.0 / 9.0;
 const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f64 / ASPECT_RATIO) as u32;
 

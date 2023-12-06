@@ -13,9 +13,10 @@ use rand::prelude::*;
 use std::f64::consts::PI;
 
 const MAX_COLOR: u32 = 255;
-const NUM_SAMPLES: u32 = 10;
 const TIMES_REFLECTION: u32 = 50; // maximum reflection times, otherwise may cause stackoverflow
-const NUM_THREADS: u32 = 12;
+const NUM_THREADS: u32 = 4;
+const NUM_SAMPLES: u32 = 10;
+const NUM_SAMPLING_THREADS: u32 = 3;
 
 
 #[derive(Copy, Clone)]
@@ -96,25 +97,29 @@ impl Camera {
         let width = self.image_w;
         use crate::{IMAGE_WIDTH, IMAGE_HEIGHT};
         let canvas = Arc::new(Mutex::new(vec![vec![RGB(0, 0, 0); IMAGE_WIDTH as usize]; IMAGE_HEIGHT as usize]));
+        let total = Arc::new(Mutex::new(0_u32));
         let mut threads = vec![];
         for i in 0..NUM_THREADS {
             let canvas_ref = canvas.clone();
             let world_ref = world.clone();
+            let total_ref = total.clone();
             threads.push(thread::spawn(move || {
                 let mut col = i;
                 while col < width {
                     for j in 0..image_h {
-                        let temp = Self::write_color(Self::get_sample_ray(i, j, pixel00_loc, delta_u, delta_v, world_ref.clone()));
+                        let temp = Self::write_color(Self::get_sample_ray(j, col, pixel00_loc, delta_u, delta_v, world_ref.clone()));
                         let mut guard = canvas_ref.lock().unwrap();
-                        (*guard)[j as usize][i as usize] = temp;
+                        (*guard)[j as usize][col as usize] = temp;
                     }
+                    let mut guard = total_ref.lock().unwrap();
+                    *guard += 1;
+                    eprintln!("{} / {} columns have been rendered!", *guard, width);
                     col += NUM_THREADS;
                 }
             }));
         }
         for thread in threads {
             thread.join().expect("thread spawn fail!");
-            eprintln!("one of threads has finished");
         }
          
         // write canvas into file
@@ -135,21 +140,25 @@ impl Camera {
     fn get_sample_ray(i: u32, j: u32, pixel00_loc: Point3, delta_u: Vec3, delta_v: Vec3, world: Arc<dyn Hittable + Sync + Send>) -> Color {
         let center_pixel: Point3 = pixel00_loc + j as f64 * delta_u - i as f64 * delta_v;
         let pixel_color = Arc::new(Mutex::new(Color::new(0.0, 0.0, 0.0)));
-        let origin = Point3::new(0.0, 0.0, 0.0);
+        let origin = Point3::new(13.0, 2.0, 3.0);
         // let origin = if self.defocus_angle <= 0.0 {self.lookfrom} else {self.defocus_disk_sample()};
         let mut threads = vec![];
-        for _ in 0..NUM_SAMPLES {
+        for _ in 0..NUM_SAMPLING_THREADS {
             let pixel_color_ref = pixel_color.clone();
             let world_ref = world.clone();
             threads.push(thread::spawn(move || {
-                let random = thread_rng().gen_range(-0.5..=0.5);
-                let random_pixel = center_pixel + random * delta_u + random * delta_v;
-                // code below will cause lifetime issue, so I put them outside closure
-                // let origin = if self.defocus_angle <= 0.0 {self.lookfrom} else {self.defocus_disk_sample()};    
-                let ray = Ray::new(origin, random_pixel - origin);
-                let color = Self::ray_color(&ray, world_ref, TIMES_REFLECTION);
-                let mut guard = pixel_color_ref.lock().unwrap();
-                *guard += color;
+                let mut times = NUM_SAMPLES / NUM_SAMPLING_THREADS;
+                if i == NUM_SAMPLING_THREADS - 1 { times += NUM_SAMPLES % NUM_SAMPLING_THREADS; }
+                for _ in 0..times {
+                    let random = thread_rng().gen_range(-0.5..=0.5);
+                    let random_pixel = center_pixel + random * delta_u + random * delta_v;
+                    // code below will cause lifetime issue, so I put them outside closure
+                    // let origin = if self.defocus_angle <= 0.0 {self.lookfrom} else {self.defocus_disk_sample()};    
+                    let ray = Ray::new(origin, random_pixel - origin);
+                    let color = Self::ray_color(&ray, world_ref.clone(), TIMES_REFLECTION);
+                    let mut guard = pixel_color_ref.lock().unwrap();
+                    *guard += color;
+                }
             }));
         }
         for thread in threads {
